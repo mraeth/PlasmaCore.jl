@@ -1,0 +1,36 @@
+# Julia generated files
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+deps/deps.jl
+deps/build.log
+docs/build/
+docs/src/index.md
+docs/src/examples.md
+docs/src/notebooks/
+build/
+# Generated outputs
+*.gif
+*.mp4
+*.png
+*.pdf
+!docs/**/*.png
+!docs/**/*.pdf
+*html
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local environment
+LocalPreferences.toml
+Manifest.toml
