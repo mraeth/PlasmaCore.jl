@@ -1,3 +1,20 @@
+"""
+    TensorField{DT,N,AT,Rank,NF}
+
+Grid field of rank `Rank` (0 = scalar, 1 = vector, 2 = matrix), stored as an
+`NTuple` of `NF` component arrays of type `AT`.
+
+# Indexing conventions (`[]` means different things per rank)
+- `ScalarField` (`Rank == 0`): `[]` indexes **spatially** into the field
+  (`sf[i,j]`, `sf[end,end]`, `axes(sf)`, ... all behave like indexing
+  `sf.data`). Indexing with all `Integer`s returns the raw scalar element;
+  any slice (`:`, ranges, ...) returns a `ScalarField`, not a plain `Array`.
+- `VectorField`/`MatrixField` (`Rank >= 1`): `[]` selects a **tensor
+  component**, not a spatial point — `vf[i]` is the `i`-th component
+  `ScalarField`, `mf[i,j]` is the `(i,j)` component `ScalarField`. To index
+  spatially into a component, first select it (`vf[i][a,b]`) or use `.data`
+  / `Array(...)` on the whole field.
+"""
 struct TensorField{DT,N,AT<:AbstractArray{DT,N},Rank,NF}
     data::NTuple{NF,AT}
     function TensorField{DT,N,AT,Rank,NF}(
@@ -21,6 +38,21 @@ function Base.getproperty(tf::ScalarField, sym::Symbol)
     sym === :data && return getfield(tf, :data)[1]
     return getfield(tf, sym)
 end
+
+# ScalarField spatial indexing: forward directly to the underlying array.
+# (VectorField/MatrixField already use `[]` for tensor-component selection;
+# Rank 0 has no component to select, so spatial indexing here is unambiguous.)
+# A slice (any non-Integer index, e.g. `:`/ranges) stays a ScalarField rather
+# than decaying into a plain Array; indexing with all Integers still yields
+# the raw scalar element, matching normal Array getindex behaviour.
+function Base.getindex(sf::ScalarField, idx...)
+    r = sf.data[idx...]
+    return r isa AbstractArray ? ScalarField(r) : r
+end
+Base.setindex!(sf::ScalarField, v, idx...) = (sf.data[idx...] = v)
+Base.axes(sf::ScalarField)                 = axes(sf.data)
+Base.axes(sf::ScalarField, d::Integer)     = axes(sf.data, d)
+Base.size(sf::ScalarField)                 = size(sf.data)
 
 
 # Constructor functions
