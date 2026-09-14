@@ -6,7 +6,8 @@ Core data structures and numerical infrastructure for plasma physics simulations
 
 | Module area | What it provides |
 |---|---|
-| **Fields** | `TensorField`, `ScalarField`, `VectorField`, `MatrixField` — N-dimensional field types with arithmetic |
+| **Fields** | `ScalarField`, `TensorField` (`VectorField`, `MatrixField`) — a genuine `AbstractArray` hierarchy over the spatial grid and the tensor-component axis, with arithmetic |
+| **Time series** | `TimeSeries` — a lazy, cached `AbstractArray` over an integer time axis, generic over how a timestep is fetched |
 | **Grids** | `CartGrid`, `PolarGrid` — phase-space grids with spatial and velocity axes |
 | **Distribution** | `DistributionGrid` — phase-space array f(x,v) backed by a `ScalarField` |
 | **Spectral operators** | `differentiate`, `grad`, `div`, `curl` — allocation-free spectral derivatives |
@@ -56,32 +57,57 @@ f.field  # the underlying ScalarField
 
 ### Fields
 
-```julia
-TensorField{DT, N, AT, Rank, NF}
-```
+Fields form a genuine, 2-level `AbstractArray` hierarchy — one level per axis:
 
-Base field type. `DT` is the element type, `N` the array rank, `AT` the storage array type, `Rank` the tensor rank (0, 1, or 2), and `NF` the number of components.
-
-| Alias | Rank | Components | Typical use |
+| Type | Supertype | `[]` indexes over | Typical use |
 |---|---|---|---|
-| `ScalarField{DT,N,AT}` | 0 | 1 | potential, density |
-| `VectorField{DT,N,AT,NF}` | 1 | NF | electric field, current |
-| `MatrixField{DT,N,AT,NF}` | 2 | NF = NS² | pressure tensor |
+| `ScalarField{DT,N,AT}` | `AbstractArray{DT,N}` | the **spatial grid** (`sf[i,j]` is a grid point) | potential, density |
+| `TensorField{SF,Rank,NF}` | `AbstractArray{SF,Rank}` | the **tensor-component axis** (`vf[i]`/`mf[i,j]` is a component `ScalarField`) | electric field, current, pressure tensor |
 
-Constructors accept raw arrays or vectors/matrices of arrays:
+`TensorField` is aliased as `VectorField{SF,NF}` (`Rank == 1`) and `MatrixField{SF,NF}` (`Rank == 2`, `NF == NS²`). To index *spatially* into one component, index the field twice: `vf[i][a,b]`.
+
+Because each level is a real `AbstractArray`, the standard array protocol works directly with no bespoke methods needed: `mean`, `sum`, broadcasting (`.+`, `.-`, `.*`), `map`, slicing, and comprehensions all just work on `ScalarField`s and, at the component level, on `TensorField`s.
+
+`ScalarField` wraps a single backend array (`data::AT`). `TensorField` wraps `NF` separately-allocated component `ScalarField`s as `data::NTuple{NF,SF}` — struct-of-arrays, not one array of tuples/`SVector`s — so a solver can keep differentiating one whole component array at a time. `MatrixField` stores its `NS×NS` components in row-major flat order (`NS = isqrt(NF)`).
+
+Constructors accept raw arrays or vectors/matrices of `ScalarField`s/raw arrays:
 
 ```julia
 phi = ScalarField(zeros(64))
 E   = VectorField([zeros(64), zeros(64)])
-Pi  = MatrixField([zeros(64) for _ in 1:9])   # 3×3
+Pi  = MatrixField(reshape([zeros(64) for _ in 1:9], 3, 3))   # 3×3
 ```
 
-Field arithmetic (`+`, `-`, `*`, scalar broadcast, matrix-vector) is supported directly:
+Field arithmetic (`+`, `-`, scalar `*`, matrix-vector/matrix-matrix products, `transpose`) is supported directly on `TensorField`s:
 
 ```julia
 E2 = 2.0 * E
-J  = R * E        # R::AbstractMatrix, E::VectorField → VectorField
+J  = R * E        # R::AbstractMatrix, E::VectorField → VectorField (R must be NF×NF)
 ```
+
+`ScalarField * ScalarField` is elementwise (Hadamard), not matrix multiplication — an explicit override, since without it Julia's generic `*` between two `AbstractMatrix`es (which a 2D `ScalarField` is) would mean real matrix multiplication.
+
+### TimeSeries
+
+```julia
+TimeSeries{F,L} <: AbstractArray{F,1}
+```
+
+The third level of the hierarchy: a lazy, cached array over an integer time axis, generic over *how* a timestep is fetched via a `loader::L` closure (`loader(step::Int)::F`, where `F` is a `ScalarField` or `TensorField` type). Only the first timestep is loaded eagerly, at construction; the rest are fetched (and cached) on first access.
+
+```julia
+loader(step) = ScalarField(load_from_disk(step))   # any source: HDF5, memory, a running sim...
+ts = TimeSeries(loader, collect(1:1000); label = "n")
+
+ts[10]            # loads + caches timestep 10
+ts[1:100]         # sub-TimeSeries sharing the already-cached entries (no re-fetching)
+ts[10, 1:5]       # spatial slice at one timestep — composes with the field's own indexing
+ts[:, 1:5]        # the same spatial slice across every timestep, returned as a TimeSeries
+
+dn = map(x -> x .- mean(x), ts)   # TimeSeries of demeaned fields, reconstructed via `similar`
+```
+
+`map`/broadcasting reconstruct a `TimeSeries` when `f` returns a `ScalarField`/`TensorField`, and fall back to a plain `Array` otherwise (e.g. `map(sum, ts)` returns a `Vector`, not a `TimeSeries` of scalars).
 
 ### Grid
 
@@ -204,9 +230,19 @@ struct MyFieldSolver <: AbstractFieldSolver end
 
 `Moments(rho, J, Pi_diff)` holds particle-moment inputs; `FieldSolution(E, B)` holds EM field outputs.
 
+## Testing
+
+```julia
+using Pkg
+Pkg.test("PlasmaCore")
+# or, from the package directory:
+julia --project=. test/runtests.jl
+```
+
 ## Design notes
 
 - **No exports**: all names are accessed as `PlasmaCore.X` or via explicit `using PlasmaCore: X`.
+- **A genuine 3-level `AbstractArray` hierarchy**: `ScalarField` (over the spatial grid), `TensorField`/`VectorField`/`MatrixField` (over the tensor-component axis), and `TimeSeries` (over an integer time axis) are each real `AbstractArray` subtypes over their own axis — not a single flat type overloading `[]` to mean different things per rank. This is why `mean`/`sum`/broadcasting/`map`/slicing work uniformly at every level with no bespoke methods, at the cost of `ScalarField * ScalarField` needing an explicit elementwise override (see [Fields](#fields)) to avoid colliding with `LinearAlgebra`'s generic matrix multiplication.
 - **Float32 on Metal**: `use_metal!()` installs an allocator that downcasts `Float64` arrays to `Float32` on upload. Design simulation code with `DT` type parameters to run on any precision.
 - **Cached spectral workspaces**: keyed by array size, element type, and grid delta. No FFT plan is rebuilt on repeated calls.
-- **Adapt-compatible**: `Grid` and all `TensorField` subtypes implement `Adapt.adapt_structure`, so they can be passed directly into GPU kernels via KernelAbstractions.
+- **Adapt-compatible grid**: `Grid` implements `Adapt.adapt_structure`, so it can be passed directly into GPU kernels via KernelAbstractions. `ScalarField`/`TensorField` do not implement it themselves — GPU residency is controlled per-array via `backend_array`/`backend_copy` instead (see [Backend management](#backend-management)).
