@@ -100,9 +100,6 @@ function _differentiate_impl!(
     return out
 end
 
-@inline _differentiate_impl!(out::AbstractArray, field::ScalarField, args...) =
-    _differentiate_impl!(out, field.data, args...)
-
 function _differentiate_impl!(
     out::AbstractArray,
     field_data::AbstractArray,
@@ -251,7 +248,7 @@ function grad(field::ScalarField{T,N}, grid::Grid) where {T,N}
     ])
 end
 
-function div(field::VectorField{T,N}, grid::Grid) where {T,N}
+function div(field::VectorField, grid::Grid)
     ndirs = spatial_ndims(grid)
     ncomp = ncomponents(field)
     ndirs >= 1 || throw(ArgumentError("div requires at least one spatial dimension"))
@@ -265,7 +262,7 @@ function div(field::VectorField{T,N}, grid::Grid) where {T,N}
     return ScalarField(out)
 end
 
-function div(field::TensorField{DT,N,AT,2,NF}, grid::Grid) where {DT,N,AT,NF}
+function div(field::MatrixField{SF,NF}, grid::Grid) where {SF,NF}
     ndirs = spatial_ndims(grid)
     NS = isqrt(NF)
     ndirs >= 1 || throw(ArgumentError("div requires at least one spatial dimension"))

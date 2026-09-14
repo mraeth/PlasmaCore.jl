@@ -50,7 +50,7 @@ function backend_copy(e::ScalarField)
     return ScalarField(backend_copy(e.data))
 end
 
-function backend_copy(m::TensorField{DT,N,AT,2,NF}) where {DT,N,AT,NF}
+function backend_copy(m::MatrixField{SF,NF}) where {SF,NF}
     NS = isqrt(NF)
     return MatrixField([backend_copy(m[i, j]) for i = 1:NS, j = 1:NS])
 end
