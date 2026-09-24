@@ -16,10 +16,26 @@ Core data structures and numerical infrastructure for plasma physics simulations
 
 ## Installation
 
+PlasmaCore.jl is distributed through the [BSLRegistry](https://gitlab.mpcdf.mpg.de/bsl6d/BSLRegistry)
+(it's not in Julia's General registry). Add the registry once per machine / cluster account:
+
 ```julia
-using Pkg
-Pkg.add(url="https://github.com/mraeth/PlasmaCore.jl")
+pkg> registry add https://gitlab.mpcdf.mpg.de/bsl6d/BSLRegistry.git
 ```
+
+then install it like any registered package:
+
+```julia
+pkg> add PlasmaCore
+julia> using PlasmaCore
+```
+
+Alternatively, type `using PlasmaCore` directly in the REPL: if the package isn't installed in the
+active environment yet, Julia offers to install it.
+
+Pick up new releases with `pkg> registry up` followed by `pkg> up`. To work on PlasmaCore itself,
+clone this repository and `pkg> dev /path/to/PlasmaCore.jl` into the environment you're testing in
+(`pkg> free PlasmaCore` switches back to the registered release).
 
 GPU backends are optional weak dependencies. Load them before calling the corresponding `use_*!()` function:
 
