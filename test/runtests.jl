@@ -16,6 +16,7 @@ using LinearAlgebra
     include("test_tensorfield.jl")
     include("test_timeseries.jl")
     include("test_spectral_operators.jl")
+    include("test_fd_operators.jl")
     include("test_grid_time_indexing.jl")
     include("test_execution_and_solver.jl")
 end
