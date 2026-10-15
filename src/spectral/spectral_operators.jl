@@ -223,30 +223,7 @@ function _apply_curl!(
     return out
 end
 
-function differentiate(field::ScalarField{T,N}, grid::Grid, dir::Int) where {T,N}
-    1 <= N <= 3 ||
-        throw(ArgumentError("differentiate currently supports 1D, 2D, and 3D ScalarFields"))
-    1 <= dir <= N || throw(ArgumentError("direction $dir is outside the field dimensions"))
-    dir <= length(grid.xaxes) ||
-        throw(ArgumentError("direction $dir is outside the spatial grid dimensions"))
-    ws = _get_spectral_workspace(field.data, grid)
-    out = similar(field.data, eltype(field.data))
-    _differentiate_impl!(out, field, ws, dir)
-    return ScalarField(out)
-end
-
-function grad(field::ScalarField{T,N}, grid::Grid) where {T,N}
-    ndirs = spatial_ndims(grid)
-    ndirs >= 1 || throw(ArgumentError("grad requires at least one spatial dimension"))
-    ws = _get_spectral_workspace(field.data, grid)
-    return VectorField([
-        begin
-            out = similar(field.data, eltype(field.data))
-            _differentiate_impl!(out, field, ws, d)
-            ScalarField(out)
-        end for d = 1:ndirs
-    ])
-end
+# `differentiate` and `grad` (any derivative operator) live in finite_difference/fd_operators.jl.
 
 function div(field::VectorField, grid::Grid)
     ndirs = spatial_ndims(grid)

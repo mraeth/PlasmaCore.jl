@@ -11,6 +11,7 @@ Core data structures and numerical infrastructure for plasma physics simulations
 | **Grids** | `CartGrid`, `PolarGrid` — phase-space grids with spatial and velocity axes |
 | **Distribution** | `DistributionGrid` — phase-space array f(x,v) backed by a `ScalarField` |
 | **Spectral operators** | `differentiate`, `grad`, `div`, `curl` — allocation-free spectral derivatives |
+| **Finite differences** | `FD(order, bc)` with `Periodic()`/`Mirror()` boundaries, per axis in `differentiate!`/`grad!` |
 | **Time** | `SimulationTime` — iteration-based time stepper with progress display |
 | **Execution** | CPU/CUDA/ROCm/Metal backend switching; `backend_copy`, `backend_synchronize!` |
 
@@ -202,6 +203,23 @@ Wavenumber access:
 k  = spectral_wavenumbers(phi.data, grid, 1)   # 1D wavenumber vector
 k2 = spectral_wavenumber_squared(phi, grid)     # |k|²  (for Poisson solvers)
 ```
+
+## Finite-difference operators
+
+`differentiate`/`differentiate!` take a derivative operator per call and `grad`/`grad!` one per
+spatial axis: `Spectral()` (the default, periodic FFT derivative) or `FD(order, bc)`, a central
+finite difference of even `order` (`FD(8)` is bsl6d's 9-point stencil). Nodes beyond the axis ends
+follow `bc`: `Periodic()` (default) or `Mirror()`, the even reflection about the first and last node
+(`… 3, 2 | 1 … n | n-1, n-2 …`), so that the derivative vanishes on both walls.
+
+```julia
+dphidx = differentiate(phi, grid, 1, FD(8, Mirror()))               # allocating
+differentiate!(E[1], phi, grid, 1, FD(8, Mirror()); negate = true)  # E₁ = -∂φ/∂x₁ in place
+grad!(E, phi, grid, (FD(8, Mirror()), Spectral()); negate = true)   # E = -∇φ, x₁ mirror, x₂ periodic
+```
+
+For `FD`, `out` and `field` must not alias, and the axis needs more than `order/2` nodes. The
+kernel runs on every KernelAbstractions backend.
 
 ## Backend management
 
