@@ -149,13 +149,35 @@ end
     @test all(d -> isapprox(cm[d].data, c[d].data; atol = 1e-4), 1:3)
 
     # the workspace forms used by solvers give the same result as the default operators
-    ws = PlasmaCore._get_spectral_workspace(F[1].data, grid)
+    ws = PlasmaCore.spectral_workspace(F[1].data, grid)
     out, temp = similar(F[1].data), similar(F[1].data)
-    PlasmaCore._apply_div!(out, F, temp, ws, grid)
+    PlasmaCore.div!(out, F, ws, temp)
     @test out == PlasmaCore.div(F, grid).data
     outs = ntuple(_ -> similar(F[1].data), 3)
-    PlasmaCore._apply_curl!(outs, F, temp, ws, grid)
+    PlasmaCore.curl!(outs, F, ws, temp)
     @test all(d -> outs[d] == c[d].data, 1:3)
+    differentiate!(out, F[1], ws, 2; negate = true)
+    @test out == -differentiate(F[1], grid, 2).data
+
+    # Fourier-space round trip and curl_hat! against curl
+    hats = ntuple(d -> similar(F[1].data, ComplexF64), 3)
+    foreach(d -> PlasmaCore.fft_spatial!(hats[d], F[d].data, ws), 1:3)
+    chat = ntuple(_ -> similar(hats[1]), 3)
+    PlasmaCore.curl_hat!(chat, hats, PlasmaCore.spectral_wavenumber_views(F[1], grid))
+    back = similar(F[1].data)
+    @test all(1:3) do d
+        PlasmaCore.ifft_spatial!(back, chat[d], ws)
+        isapprox(back, c[d].data; atol = 1e-12)
+    end
+
+    # deprecated internals (used by bslLD 0.1.0) still give identical results
+    old = similar(out)
+    @test_deprecated PlasmaCore._apply_div!(old, F, temp, ws, grid)
+    PlasmaCore.div!(out, F, ws, temp)
+    @test old == out
+    @test_deprecated PlasmaCore._differentiate_impl!(old, F[1], ws, 2, true)
+    @test old == -differentiate(F[1], grid, 2).data
+    @test (@test_deprecated PlasmaCore._get_spectral_workspace(F[1].data, grid)) === ws
 
     # vector components have a parity under a mirror; not implemented, so rejected
     mirror = (FD(8, Mirror()), Spectral(), Spectral())

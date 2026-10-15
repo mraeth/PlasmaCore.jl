@@ -50,10 +50,6 @@ function SpectralWorkspace(arr::AbstractArray, grid::Grid)
     return SpectralWorkspace(fft_buf, fwd_plans, inv_plans, k, backend())
 end
 
-# Unified cache for all solver workspaces.
-# Key: (solver_tag::Symbol, size, eltype, ndims_x, ncomp, bdir, delta_tuple)
-const _solver_workspace_cache = Dict{Any,Any}()
-const _solver_workspace_cache_lock = ReentrantLock()
 
 # Shared cache for SpectralWorkspace objects keyed by grid shape.
 # Key: (size, eltype, ndims_x, delta_tuple)
@@ -65,16 +61,23 @@ function _spectral_ws_key(arr::AbstractArray, grid::Grid)
     return (size(arr), eltype(arr), ndims_x, Tuple(grid.delta[1:ndims_x]))
 end
 
-function _get_spectral_workspace(arr::AbstractArray, grid::Grid)
+"""
+    spectral_workspace(arr, grid) -> SpectralWorkspace
+
+FFT buffer, in-place plans and wavenumbers for arrays shaped like `arr` on `grid`, cached per
+(size, eltype, spatial dimensions, spacing). Pass it to the workspace forms of `differentiate!`,
+`div!`, `curl!`, `fft_spatial!` and `ifft_spatial!`, which are allocation-free.
+"""
+function spectral_workspace(arr::AbstractArray, grid::Grid)
     key = _spectral_ws_key(arr, grid)
     lock(_spectral_ws_cache_lock) do
         get!(() -> SpectralWorkspace(arr, grid), _spectral_ws_cache, key)
     end
 end
 
-# Allocation-free variant: writes into pre-allocated `out` using cached buffers and plans.
-# Set negate=true to compute -d(field)/dx_dir (for E = -∇φ).
-function _differentiate_impl!(
+# FFT derivative along `dir` into `out` with explicit buffer, plans and wavenumbers.
+# negate = true gives -d(field)/dx_dir (for E = -∇φ).
+function _differentiate_fft!(
     out::AbstractArray,
     field_data::AbstractArray,
     fhat_buf::AbstractArray,
@@ -100,65 +103,69 @@ function _differentiate_impl!(
     return out
 end
 
-function _differentiate_impl!(
-    out::AbstractArray,
-    field_data::AbstractArray,
-    ws::SpectralWorkspace,
-    dir::Int,
-    negate::Bool = false,
-)
-    _differentiate_impl!(
-        out,
-        field_data,
-        ws.fft_buf,
-        ws.fwd_plans[dir],
-        ws.inv_plans[dir],
-        ws.k[dir],
-        dir,
-        ws.backend,
-        negate,
-    )
+
+
+
+# --- Workspace forms (allocation-free, for solvers) -------------------------------------
+
+_ndims_x(ws::SpectralWorkspace) = length(ws.k)
+
+"""
+    differentiate!(out, field, ws::SpectralWorkspace, dir; negate = false)
+
+Spectral `∂field/∂x_dir` (or its negative) into `out` with the given workspace.
+"""
+function differentiate!(out, field, ws::SpectralWorkspace, dir::Int; negate::Bool = false)
+    _differentiate_fft!(_field_data(out), _field_data(field), ws.fft_buf, ws.fwd_plans[dir],
+        ws.inv_plans[dir], ws.k[dir], dir, ws.backend, negate)
+    return out
 end
 
-# Copy src → fft_buf, apply all fwd_plans in-place, copy result → dst.
-function _fwd_fft_to!(
-    sw::SpectralWorkspace,
-    src::AbstractArray,
-    dst::AbstractArray,
-    ndims_x::Int,
-)
-    @. sw.fft_buf = src
-    for d = 1:ndims_x
-        sw.fwd_plans[d] * sw.fft_buf
+_spectral_derivative(ws::SpectralWorkspace) = (o, f, d, neg) -> differentiate!(o, f, ws, d; negate = neg)
+
+"""
+    div!(out, field::VectorField, ws::SpectralWorkspace, temp)
+
+Spectral divergence into `out`; `temp` is a scratch array shaped like `out`.
+"""
+div!(out::AbstractArray, field::VectorField, ws::SpectralWorkspace, temp::AbstractArray) =
+    _div!(_spectral_derivative(ws), out, field, temp, _ndims_x(ws))
+
+"""
+    curl!(out::NTuple{3}, field::VectorField, ws::SpectralWorkspace, temp)
+
+Spectral curl into the three arrays `out` (layout as in [`curl`](@ref)); `temp` is a scratch array.
+"""
+curl!(out::NTuple{3}, field::VectorField, ws::SpectralWorkspace, temp::AbstractArray) =
+    _curl!(_spectral_derivative(ws), out, field, temp, _ndims_x(ws))
+
+"""
+    fft_spatial!(dst, src, ws::SpectralWorkspace)
+
+Forward FFT of `src` over the spatial dimensions into the complex array `dst`.
+"""
+function fft_spatial!(dst::AbstractArray, src::AbstractArray, ws::SpectralWorkspace)
+    @. ws.fft_buf = src
+    for d = 1:_ndims_x(ws)
+        ws.fwd_plans[d] * ws.fft_buf
     end
-    dst .= sw.fft_buf
+    dst .= ws.fft_buf
     return dst
 end
 
-# Copy src → fft_buf, apply all inv_plans in-place, write real part → dst.
-function _inv_fft_from!(
-    sw::SpectralWorkspace,
-    src::AbstractArray,
-    dst::AbstractArray,
-    ndims_x::Int,
-)
-    @. sw.fft_buf = src
-    for d = 1:ndims_x
-        sw.inv_plans[d] * sw.fft_buf
+"""
+    ifft_spatial!(dst, src, ws::SpectralWorkspace)
+
+Inverse FFT of `src` over the spatial dimensions; the real part is written to `dst`.
+"""
+function ifft_spatial!(dst::AbstractArray, src::AbstractArray, ws::SpectralWorkspace)
+    @. ws.fft_buf = src
+    for d = 1:_ndims_x(ws)
+        ws.inv_plans[d] * ws.fft_buf
     end
-    @. dst = real(sw.fft_buf)
+    @. dst = real(ws.fft_buf)
     return dst
 end
-
-# Spectral divergence and curl on a given workspace (used by solver workspaces); the generic,
-# per-axis-operator forms `div` and `curl` are in vector_calculus.jl.
-_spectral_derivative(ws::SpectralWorkspace) = (o, f, d, neg) -> _differentiate_impl!(o, f, ws, d, neg)
-
-_apply_div!(out::AbstractArray, field::VectorField, temp::AbstractArray, ws::SpectralWorkspace, grid::Grid) =
-    _div!(_spectral_derivative(ws), out, field, temp, spatial_ndims(grid))
-
-_apply_curl!(out::NTuple{3}, field::VectorField, temp::AbstractArray, ws::SpectralWorkspace, grid::Grid) =
-    _curl!(_spectral_derivative(ws), out, field, temp, spatial_ndims(grid))
 
 # --- Derivative operators ------------------------------------------------------------
 
@@ -173,7 +180,7 @@ FFT derivative along one axis (periodic). The default operator of `differentiate
 struct Spectral <: DerivativeOperator end
 
 _differentiate_op!(out, f, grid, dir, ::Spectral, negate) =
-    _differentiate_impl!(out, f, _get_spectral_workspace(f, grid), dir, negate)
+    differentiate!(out, f, spectral_workspace(f, grid), dir; negate)
 
 spatial_fft_dims(grid::Grid) = Tuple(1:spatial_ndims(grid))
 
@@ -205,7 +212,14 @@ function spectral_wavenumber_squared(field::ScalarField, grid::Grid)
     return k2
 end
 
-function _spectral_curl_hat!(out, fieldhat, kviews, ndims_x::Int)
+"""
+    curl_hat!(out, fieldhat, kviews)
+
+Curl in Fourier space: `out` and `fieldhat` are tuples of transformed components, `kviews` the
+wavenumbers per spatial axis reshaped for broadcasting (see `spectral_wavenumber_views`).
+"""
+function curl_hat!(out, fieldhat, kviews)
+    ndims_x = length(kviews)
     ncomp = length(fieldhat)
     if ndims_x == 1
         kx = kviews[1]
@@ -241,4 +255,40 @@ function _spectral_curl_hat!(out, fieldhat, kviews, ndims_x::Int)
             "unsupported spectral curl layout for $ndims_x spatial dimensions and $ncomp components",
         ),
     )
+end
+
+# --- Deprecated internals, kept for bslLD 0.1.0; remove in PlasmaCore 0.2 ----------------
+
+const _solver_workspace_cache = Dict{Any,Any}()       # solver caches now live in bslLD
+const _solver_workspace_cache_lock = ReentrantLock()
+
+_deprecated(old, new) = Base.depwarn("`PlasmaCore.$old` is deprecated, use `$new`.", old)
+
+function _get_spectral_workspace(arr::AbstractArray, grid::Grid)
+    _deprecated(:_get_spectral_workspace, "spectral_workspace(arr, grid)")
+    return spectral_workspace(arr, grid)
+end
+function _differentiate_impl!(out, field, ws::SpectralWorkspace, dir::Int, negate::Bool = false)
+    _deprecated(:_differentiate_impl!, "differentiate!(out, field, ws, dir; negate)")
+    return differentiate!(out, field, ws, dir; negate)
+end
+function _apply_div!(out, field::VectorField, temp, ws::SpectralWorkspace, grid::Grid)
+    _deprecated(:_apply_div!, "div!(out, field, ws, temp)")
+    return div!(out, field, ws, temp)
+end
+function _apply_curl!(out::NTuple{3}, field::VectorField, temp, ws::SpectralWorkspace, grid::Grid)
+    _deprecated(:_apply_curl!, "curl!(out, field, ws, temp)")
+    return curl!(out, field, ws, temp)
+end
+function _fwd_fft_to!(ws::SpectralWorkspace, src, dst, ndims_x::Int)
+    _deprecated(:_fwd_fft_to!, "fft_spatial!(dst, src, ws)")
+    return fft_spatial!(dst, src, ws)
+end
+function _inv_fft_from!(ws::SpectralWorkspace, src, dst, ndims_x::Int)
+    _deprecated(:_inv_fft_from!, "ifft_spatial!(dst, src, ws)")
+    return ifft_spatial!(dst, src, ws)
+end
+function _spectral_curl_hat!(out, fieldhat, kviews, ndims_x::Int)
+    _deprecated(:_spectral_curl_hat!, "curl_hat!(out, fieldhat, kviews)")
+    return curl_hat!(out, fieldhat, kviews)
 end

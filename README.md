@@ -198,6 +198,19 @@ curl_E   = curl(E, grid)               # ∇×E  → ScalarField or VectorField
 phi_hat = fft_spatial(phi.data, grid)
 ```
 
+Workspace forms, allocation-free on every call (for solvers and hot loops):
+```julia
+ws = spectral_workspace(phi.data, grid)          # cached FFT buffer, plans, wavenumbers
+differentiate!(out, phi, ws, 1; negate = true)   # out = -∂φ/∂x₁
+div!(out, E, ws, temp)                           # temp: scratch array shaped like out
+curl!((cx, cy, cz), E, ws, temp)
+fft_spatial!(Ehat, E[1].data, ws); ifft_spatial!(E[1].data, Ehat, ws)
+curl_hat!(curlEhat, Ehat, spectral_wavenumber_views(phi, grid))   # curl in Fourier space
+```
+The former internals `_get_spectral_workspace`, `_differentiate_impl!`, `_apply_div!`,
+`_apply_curl!`, `_fwd_fft_to!`, `_inv_fft_from!`, `_spectral_curl_hat!` and the
+`_solver_workspace_cache` are deprecated and will be removed in PlasmaCore 0.2.
+
 Wavenumber access:
 ```julia
 k  = spectral_wavenumbers(phi.data, grid, 1)   # 1D wavenumber vector
