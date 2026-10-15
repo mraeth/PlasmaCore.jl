@@ -11,6 +11,7 @@ Core data structures and numerical infrastructure for plasma physics simulations
 | **Grids** | `CartGrid`, `PolarGrid` — phase-space grids with spatial and velocity axes |
 | **Distribution** | `DistributionGrid` — phase-space array f(x,v) backed by a `ScalarField` |
 | **Spectral operators** | `differentiate`, `grad`, `div`, `curl` — allocation-free spectral derivatives |
+| **Finite differences** | `FD(order, bc)` with `Periodic()`/`Mirror()` boundaries, chosen per axis in `differentiate`, `grad`, `div`, `curl` |
 | **Time** | `SimulationTime` — iteration-based time stepper with progress display |
 | **Execution** | CPU/CUDA/ROCm/Metal backend switching; `backend_copy`, `backend_synchronize!` |
 
@@ -197,10 +198,48 @@ curl_E   = curl(E, grid)               # ∇×E  → ScalarField or VectorField
 phi_hat = fft_spatial(phi.data, grid)
 ```
 
+Workspace forms, allocation-free on every call (for solvers and hot loops):
+```julia
+ws = spectral_workspace(phi.data, grid)          # cached FFT buffer, plans, wavenumbers
+differentiate!(out, phi, ws, 1; negate = true)   # out = -∂φ/∂x₁
+div!(out, E, ws, temp)                           # temp: scratch array shaped like out
+curl!((cx, cy, cz), E, ws, temp)
+fft_spatial!(Ehat, E[1].data, ws); ifft_spatial!(E[1].data, Ehat, ws)
+curl_hat!(curlEhat, Ehat, spectral_wavenumber_views(phi, grid))   # curl in Fourier space
+```
+The former internals `_get_spectral_workspace`, `_differentiate_impl!`, `_apply_div!`,
+`_apply_curl!`, `_fwd_fft_to!`, `_inv_fft_from!`, `_spectral_curl_hat!` and the
+`_solver_workspace_cache` are deprecated and will be removed in PlasmaCore 0.2.
+
 Wavenumber access:
 ```julia
 k  = spectral_wavenumbers(phi.data, grid, 1)   # 1D wavenumber vector
 k2 = spectral_wavenumber_squared(phi, grid)     # |k|²  (for Poisson solvers)
+```
+
+## Finite-difference operators
+
+`differentiate`/`differentiate!` take a derivative operator per call, and `grad`/`grad!`, `div`
+and `curl` an optional tuple with one operator per spatial axis (all `Spectral()` by default): `Spectral()` (the default, periodic FFT derivative) or `FD(order, bc)`, a central
+finite difference of even `order` (`FD(8)` is bsl6d's 9-point stencil). Nodes beyond the axis ends
+follow `bc`: `Periodic()` (default) or `Mirror()`, the even reflection about the first and last node
+(`… 3, 2 | 1 … n | n-1, n-2 …`), so that the derivative vanishes on both walls.
+
+```julia
+dphidx = differentiate(phi, grid, 1, FD(8, Mirror()))               # allocating
+differentiate!(E[1], phi, grid, 1, FD(8, Mirror()); negate = true)  # E₁ = -∂φ/∂x₁ in place
+grad!(E, phi, grid, (FD(8, Mirror()), Spectral()); negate = true)   # E = -∇φ, x₁ mirror, x₂ periodic
+```
+
+For `FD`, `out` and `field` must not alias, and the axis needs more than `order/2` nodes. The
+kernel runs on every KernelAbstractions backend.
+
+`div` and `curl` accept periodic operators only (`Spectral()`, `FD(order)`): under a mirror the
+normal component of a vector is odd and the tangential ones even, which they do not handle yet.
+
+```julia
+div_E  = div(E, grid, (FD(8), Spectral()))     # ∂ₓ by finite differences, ∂ᵧ spectrally
+curl_E = curl(E, grid, (FD(8), FD(8), Spectral()))
 ```
 
 ## Backend management
