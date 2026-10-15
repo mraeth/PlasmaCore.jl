@@ -83,6 +83,7 @@ include("core/timeseries.jl")
 include("kinetics/distribution.jl")
 include("spectral/spectral_operators.jl")
 include("finite_difference/fd_operators.jl")
+include("vector_calculus.jl")
 include("field_interface/field_solver.jl")
 include("execution.jl")
 

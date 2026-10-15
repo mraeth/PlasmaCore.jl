@@ -1,14 +1,5 @@
-# First-derivative operators along one spatial axis: central finite differences (`FD`)
-# and the FFT derivative (`Spectral`), used by `differentiate!`/`differentiate` and `grad!`/`grad`.
-
-abstract type DerivativeOperator end
-
-"""
-    Spectral()
-
-FFT derivative along one axis (periodic). The default operator of `differentiate` and `grad`.
-"""
-struct Spectral <: DerivativeOperator end
+# Central finite-difference first derivative along one axis (`FD`), a `DerivativeOperator`
+# like `Spectral()`; applied through `differentiate!` and the operators in vector_calculus.jl.
 
 """
     FD(order, bc = Periodic())
@@ -56,37 +47,6 @@ Base.show(io::IO, op::FD{M}) where {M} = print(io, "FD(", 2M, ", ", op.bc, ")")
     @inbounds out[I] = negate ? -d : d
 end
 
-_field_data(x::ScalarField) = x.data
-_field_data(x::AbstractArray) = x
-
-function _check_axis(data::AbstractArray, grid::Grid, dir::Int)
-    1 <= ndims(data) <= 3 ||
-        throw(ArgumentError("differentiate supports 1D, 2D, and 3D fields"))
-    1 <= dir <= ndims(data) ||
-        throw(ArgumentError("direction $dir is outside the field dimensions"))
-    dir <= spatial_ndims(grid) ||
-        throw(ArgumentError("direction $dir is outside the spatial grid dimensions"))
-    return nothing
-end
-
-"""
-    differentiate!(out, field, grid, dir, op = Spectral(); negate = false)
-
-Writes `∂field/∂x_dir` (its negative with `negate = true`, e.g. for `E = -∇φ`) into `out`,
-with the derivative operator `op` (`Spectral()` or `FD(order, bc)`). `field` and `out` are
-`ScalarField`s or arrays of the same size; for `FD` they must not alias.
-"""
-function differentiate!(out, field, grid::Grid, dir::Int, op::DerivativeOperator = Spectral(); negate::Bool = false)
-    o, f = _field_data(out), _field_data(field)
-    size(o) == size(f) || throw(DimensionMismatch("out has size $(size(o)), field has size $(size(f))"))
-    _check_axis(f, grid, dir)
-    _differentiate_op!(o, f, grid, dir, op, negate)
-    return out
-end
-
-_differentiate_op!(out, f, grid, dir, ::Spectral, negate) =
-    _differentiate_impl!(out, f, _get_spectral_workspace(f, grid), dir, negate)
-
 function _differentiate_op!(out, f, grid, dir, op::FD{M}, negate) where {M}
     n = size(f, dir)
     n > M || throw(ArgumentError("$(op) needs more than $M nodes along axis $dir, got $n"))
@@ -97,43 +57,4 @@ function _differentiate_op!(out, f, grid, dir, op::FD{M}, negate) where {M}
         out, f, map(T, op.coeffs), op.bc, dir, T(grid.delta[dir]), negate; ndrange = size(out))
     KernelAbstractions.synchronize(be)
     return out
-end
-
-"""
-    differentiate(field, grid, dir, op = Spectral())
-
-Allocating form of [`differentiate!`](@ref); returns a `ScalarField`.
-"""
-differentiate(field::ScalarField, grid::Grid, dir::Int, op::DerivativeOperator = Spectral()) =
-    differentiate!(ScalarField(similar(field.data)), field, grid, dir, op)
-
-_spectral_ops(grid::Grid) = ntuple(_ -> Spectral(), spatial_ndims(grid))
-
-"""
-    grad!(out::VectorField, field, grid, ops = (Spectral(), …); negate = false)
-
-Gradient with one derivative operator per spatial axis, e.g. `(FD(8, Mirror()), Spectral())`.
-`negate = true` gives `-∇field`. `out` may have more components than `ops` (e.g. 3 for a 2D grid);
-the extra ones are left untouched.
-"""
-function grad!(out::VectorField, field, grid::Grid, ops::Tuple = _spectral_ops(grid); negate::Bool = false)
-    length(ops) == spatial_ndims(grid) || throw(ArgumentError(
-        "need one derivative operator per spatial axis ($(spatial_ndims(grid))), got $(length(ops))"))
-    length(out) >= length(ops) ||
-        throw(ArgumentError("out has $(length(out)) components, need $(length(ops))"))
-    for d in eachindex(ops)
-        differentiate!(out[d], field, grid, d, ops[d]; negate)
-    end
-    return out
-end
-
-"""
-    grad(field::ScalarField, grid, ops = (Spectral(), …))
-
-Allocating form of [`grad!`](@ref).
-"""
-function grad(field::ScalarField, grid::Grid, ops::Tuple = _spectral_ops(grid))
-    spatial_ndims(grid) >= 1 || throw(ArgumentError("grad requires at least one spatial dimension"))
-    out = VectorField([ScalarField(similar(field.data)) for _ in ops])
-    return grad!(out, field, grid, ops)
 end

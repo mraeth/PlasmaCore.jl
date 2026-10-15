@@ -150,130 +150,30 @@ function _inv_fft_from!(
     return dst
 end
 
-# In-place real-space divergence using SpectralWorkspace.
-# Writes sum_d d/dx_d field[d] into `out`. Uses `temp` as a scratch Float buffer.
-function _apply_div!(
-    out::AbstractArray,
-    field::VectorField,
-    temp::AbstractArray,
-    ws::SpectralWorkspace,
-    grid::Grid,
-)
-    ndims_x = spatial_ndims(grid)
-    _differentiate_impl!(out, field[1], ws, 1, false)
-    for d = 2:ndims_x
-        _differentiate_impl!(temp, field[d], ws, d, false)
-        out .+= temp
-    end
-    return out
-end
+# Spectral divergence and curl on a given workspace (used by solver workspaces); the generic,
+# per-axis-operator forms `div` and `curl` are in vector_calculus.jl.
+_spectral_derivative(ws::SpectralWorkspace) = (o, f, d, neg) -> _differentiate_impl!(o, f, ws, d, neg)
 
-# In-place real-space curl using SpectralWorkspace.
-# `out` is a NTuple{3} of Float64 field-sized arrays; `temp` is a single scratch Float array.
-function _apply_curl!(
-    out::NTuple{3},
-    field::VectorField,
-    temp::AbstractArray,
-    ws::SpectralWorkspace,
-    grid::Grid,
-)
-    ndims_x = spatial_ndims(grid)
-    ncomp = ncomponents(field)
+_apply_div!(out::AbstractArray, field::VectorField, temp::AbstractArray, ws::SpectralWorkspace, grid::Grid) =
+    _div!(_spectral_derivative(ws), out, field, temp, spatial_ndims(grid))
 
-    if ndims_x == 1
-        if ncomp == 2
-            _differentiate_impl!(out[1], field[2], ws, 1, true)    # -d/dx f[2]
-            _differentiate_impl!(out[2], field[1], ws, 1, false)   # +d/dx f[1]
-            fill!(out[3], 0)
-        elseif ncomp == 3
-            fill!(out[1], 0)
-            _differentiate_impl!(out[2], field[3], ws, 1, true)    # -d/dx f[3]
-            _differentiate_impl!(out[3], field[2], ws, 1, false)   # +d/dx f[2]
-        else
-            throw(ArgumentError("1D curl requires 2 or 3 field components"))
-        end
-    elseif ndims_x == 2 && ncomp == 2
-        # 2-component 2D curl: scalar result stored in out[1]; out[2], out[3] zeroed
-        _differentiate_impl!(out[1], field[2], ws, 1, false)   # d/dx f[2]
-        _differentiate_impl!(temp, field[1], ws, 2, false)     # d/dy f[1]
-        out[1] .-= temp
-        fill!(out[2], 0)
-        fill!(out[3], 0)
-    elseif ndims_x == 2
-        ncomp == 3 || throw(ArgumentError("2D curl requires 3 field components"))
-        _differentiate_impl!(out[1], field[3], ws, 2, false)   # d/dy f[3]
-        _differentiate_impl!(out[2], field[3], ws, 1, true)    # -d/dx f[3]
-        _differentiate_impl!(out[3], field[2], ws, 1, false)   # d/dx f[2]
-        _differentiate_impl!(temp, field[1], ws, 2, false)     # d/dy f[1]
-        out[3] .-= temp
-    elseif ndims_x == 3
-        ncomp == 3 || throw(ArgumentError("3D curl requires 3 field components"))
-        _differentiate_impl!(out[1], field[3], ws, 2, false)   # d/dy f[3]
-        _differentiate_impl!(temp, field[2], ws, 3, false)     # d/dz f[2]
-        out[1] .-= temp
-        _differentiate_impl!(out[2], field[1], ws, 3, false)   # d/dz f[1]
-        _differentiate_impl!(temp, field[3], ws, 1, false)     # d/dx f[3]
-        out[2] .-= temp
-        _differentiate_impl!(out[3], field[2], ws, 1, false)   # d/dx f[2]
-        _differentiate_impl!(temp, field[1], ws, 2, false)     # d/dy f[1]
-        out[3] .-= temp
-    else
-        throw(ArgumentError("_apply_curl! supports 1D, 2D, and 3D grids"))
-    end
-    return out
-end
+_apply_curl!(out::NTuple{3}, field::VectorField, temp::AbstractArray, ws::SpectralWorkspace, grid::Grid) =
+    _curl!(_spectral_derivative(ws), out, field, temp, spatial_ndims(grid))
 
-# `differentiate` and `grad` (any derivative operator) live in finite_difference/fd_operators.jl.
+# --- Derivative operators ------------------------------------------------------------
 
-function div(field::VectorField, grid::Grid)
-    ndirs = spatial_ndims(grid)
-    ncomp = ncomponents(field)
-    ndirs >= 1 || throw(ArgumentError("div requires at least one spatial dimension"))
-    ncomp >= ndirs || throw(
-        ArgumentError("div on a $ndirs-D grid requires at least $ndirs vector components"),
-    )
-    ws = _get_spectral_workspace(field[1].data, grid)
-    out = similar(field[1].data, eltype(field[1].data))
-    temp = similar(out)
-    _apply_div!(out, field, temp, ws, grid)
-    return ScalarField(out)
-end
+abstract type DerivativeOperator end
 
-function div(field::MatrixField{SF,NF}, grid::Grid) where {SF,NF}
-    ndirs = spatial_ndims(grid)
-    NS = isqrt(NF)
-    ndirs >= 1 || throw(ArgumentError("div requires at least one spatial dimension"))
-    NS >= ndirs || throw(
-        ArgumentError("div on a $ndirs-D grid requires at least $ndirs matrix columns"),
-    )
-    ws = _get_spectral_workspace(field[1, 1].data, grid)
-    out = similar(field[1, 1].data, eltype(field[1, 1].data))
-    temp = similar(out)
-    rows = Vector{ScalarField}(undef, NS)
-    for i = 1:NS
-        row = VectorField([field[i, d] for d = 1:ndirs])
-        _apply_div!(out, row, temp, ws, grid)
-        rows[i] = ScalarField(copy(out))
-    end
-    return VectorField(rows)
-end
+"""
+    Spectral()
 
-function curl(field::VectorField, grid::Grid)
-    ndims_x = spatial_ndims(grid)
-    ncomp = ncomponents(field)
-    ws = _get_spectral_workspace(field[1].data, grid)
-    temp = similar(field[1].data, eltype(field[1].data))
-    out = ntuple(_ -> similar(field[1].data, eltype(field[1].data)), 3)
-    _apply_curl!(out, field, temp, ws, grid)
+FFT derivative along one axis (periodic). The default operator of `differentiate`, `grad`,
+`div` and `curl`.
+"""
+struct Spectral <: DerivativeOperator end
 
-    if ndims_x == 2 && ncomp == 2
-        return ScalarField(out[1])
-    elseif ndims_x == 1 && ncomp == 2
-        return VectorField([ScalarField(out[1]), ScalarField(out[2])])
-    else
-        return VectorField([ScalarField(out[1]), ScalarField(out[2]), ScalarField(out[3])])
-    end
-end
+_differentiate_op!(out, f, grid, dir, ::Spectral, negate) =
+    _differentiate_impl!(out, f, _get_spectral_workspace(f, grid), dir, negate)
 
 spatial_fft_dims(grid::Grid) = Tuple(1:spatial_ndims(grid))
 

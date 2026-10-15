@@ -130,3 +130,36 @@ end
     @test eltype(out) == Float32
     @test out ≈ Float32.(2pi .* cos.(2pi .* collect(grid.xaxes[1]))) rtol = 1e-3
 end
+
+@testset "Vector calculus: div and curl with per-axis operators" begin
+    N = (32, 16, 8)
+    grid = Grid([0.0, 0.0, 0.0], [2pi, 2pi, 2pi], collect(N), 3)
+    xs, ys, zs = collect.(grid.xaxes)
+    F = VectorField([
+        ScalarField([sin(x) * cos(y) for x in xs, y in ys, z in zs]),
+        ScalarField([cos(2x) * sin(z) for x in xs, y in ys, z in zs]),
+        ScalarField([sin(y + z) for x in xs, y in ys, z in zs]),
+    ])
+    spectral = (Spectral(), Spectral(), Spectral())
+    mixed = (FD(8), FD(8), Spectral())               # FD on the finer axes (kh <= 0.4)
+
+    @test PlasmaCore.div(F, grid, spectral).data == PlasmaCore.div(F, grid).data
+    @test PlasmaCore.div(F, grid, mixed).data ≈ PlasmaCore.div(F, grid).data atol = 1e-4
+    c, cm = PlasmaCore.curl(F, grid), PlasmaCore.curl(F, grid, mixed)
+    @test all(d -> isapprox(cm[d].data, c[d].data; atol = 1e-4), 1:3)
+
+    # the workspace forms used by solvers give the same result as the default operators
+    ws = PlasmaCore._get_spectral_workspace(F[1].data, grid)
+    out, temp = similar(F[1].data), similar(F[1].data)
+    PlasmaCore._apply_div!(out, F, temp, ws, grid)
+    @test out == PlasmaCore.div(F, grid).data
+    outs = ntuple(_ -> similar(F[1].data), 3)
+    PlasmaCore._apply_curl!(outs, F, temp, ws, grid)
+    @test all(d -> outs[d] == c[d].data, 1:3)
+
+    # vector components have a parity under a mirror; not implemented, so rejected
+    mirror = (FD(8, Mirror()), Spectral(), Spectral())
+    @test_throws ArgumentError PlasmaCore.div(F, grid, mirror)
+    @test_throws ArgumentError PlasmaCore.curl(F, grid, mirror)
+    @test_throws ArgumentError PlasmaCore.div(F, grid, (Spectral(), Spectral()))
+end
