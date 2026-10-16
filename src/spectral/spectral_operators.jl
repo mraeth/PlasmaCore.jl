@@ -256,39 +256,3 @@ function curl_hat!(out, fieldhat, kviews)
         ),
     )
 end
-
-# --- Deprecated internals, kept for bslLD 0.1.0; remove in PlasmaCore 0.2 ----------------
-
-const _solver_workspace_cache = Dict{Any,Any}()       # solver caches now live in bslLD
-const _solver_workspace_cache_lock = ReentrantLock()
-
-_deprecated(old, new) = Base.depwarn("`PlasmaCore.$old` is deprecated, use `$new`.", old)
-
-function _get_spectral_workspace(arr::AbstractArray, grid::Grid)
-    _deprecated(:_get_spectral_workspace, "spectral_workspace(arr, grid)")
-    return spectral_workspace(arr, grid)
-end
-function _differentiate_impl!(out, field, ws::SpectralWorkspace, dir::Int, negate::Bool = false)
-    _deprecated(:_differentiate_impl!, "differentiate!(out, field, ws, dir; negate)")
-    return differentiate!(out, field, ws, dir; negate)
-end
-function _apply_div!(out, field::VectorField, temp, ws::SpectralWorkspace, grid::Grid)
-    _deprecated(:_apply_div!, "div!(out, field, ws, temp)")
-    return div!(out, field, ws, temp)
-end
-function _apply_curl!(out::NTuple{3}, field::VectorField, temp, ws::SpectralWorkspace, grid::Grid)
-    _deprecated(:_apply_curl!, "curl!(out, field, ws, temp)")
-    return curl!(out, field, ws, temp)
-end
-function _fwd_fft_to!(ws::SpectralWorkspace, src, dst, ndims_x::Int)
-    _deprecated(:_fwd_fft_to!, "fft_spatial!(dst, src, ws)")
-    return fft_spatial!(dst, src, ws)
-end
-function _inv_fft_from!(ws::SpectralWorkspace, src, dst, ndims_x::Int)
-    _deprecated(:_inv_fft_from!, "ifft_spatial!(dst, src, ws)")
-    return ifft_spatial!(dst, src, ws)
-end
-function _spectral_curl_hat!(out, fieldhat, kviews, ndims_x::Int)
-    _deprecated(:_spectral_curl_hat!, "curl_hat!(out, fieldhat, kviews)")
-    return curl_hat!(out, fieldhat, kviews)
-end

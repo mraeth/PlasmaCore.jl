@@ -170,15 +170,6 @@ end
         isapprox(back, c[d].data; atol = 1e-12)
     end
 
-    # deprecated internals (used by bslLD 0.1.0) still give identical results
-    old = similar(out)
-    @test_deprecated PlasmaCore._apply_div!(old, F, temp, ws, grid)
-    PlasmaCore.div!(out, F, ws, temp)
-    @test old == out
-    @test_deprecated PlasmaCore._differentiate_impl!(old, F[1], ws, 2, true)
-    @test old == -differentiate(F[1], grid, 2).data
-    @test (@test_deprecated PlasmaCore._get_spectral_workspace(F[1].data, grid)) === ws
-
     # vector components have a parity under a mirror; not implemented, so rejected
     mirror = (FD(8, Mirror()), Spectral(), Spectral())
     @test_throws ArgumentError PlasmaCore.div(F, grid, mirror)
