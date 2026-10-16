@@ -13,23 +13,53 @@ broadcasting, `map`, slicing, and comprehensions all work directly.
   own spatial indexing: `ts[t, ...] == ts[t][...]`)
 - `ts[:, ...]` / `ts[a:b, ...]` — spatial slice across (a range of) timesteps,
   returned as a `TimeSeries`
+
+# Times
+`timesteps` are integer step numbers. Physical times are optional: pass
+`times = [t₁, t₂, …]` (one per step) to the constructor and read them back with
+[`times`](@ref). They are the only correct time axis if `dt` changed, the run did
+not start at 0, or the records are irregular. Slicing keeps them aligned with the
+steps. Without `times`, `times(ts)` throws (a series does not know its `dt`).
 """
 mutable struct TimeSeries{F,L} <: AbstractArray{F,1}
     timesteps::Vector{Int}
+    times::Union{Nothing,Vector{Float64}}
     label::String
     loader::L
     _cache::Dict{Int,F}
 end
 
-function TimeSeries(loader, timesteps::Vector{Int}; label::String = "")
+function TimeSeries(
+    loader,
+    timesteps::Vector{Int};
+    label::String = "",
+    times::Union{Nothing,AbstractVector{<:Real}} = nothing,
+)
+    times === nothing ||
+        length(times) == length(timesteps) ||
+        throw(DimensionMismatch("times has $(length(times)) entries for $(length(timesteps)) timesteps"))
     f0 = loader(first(timesteps))
     F = typeof(f0)
     return TimeSeries{F,typeof(loader)}(
         timesteps,
+        times === nothing ? nothing : Vector{Float64}(times),
         label,
         loader,
         Dict(first(timesteps) => f0),
     )
+end
+
+"""
+    times(ts::TimeSeries) -> Vector{Float64}
+
+Physical time of each record, as given at construction. Throws if the series was
+built without `times`.
+"""
+function times(ts::TimeSeries)
+    ts.times === nothing && throw(
+        ArgumentError("TimeSeries \"$(ts.label)\" has no times; construct it with `times = ...`"),
+    )
+    return ts.times
 end
 
 Base.size(ts::TimeSeries) = (length(ts.timesteps),)
@@ -49,13 +79,20 @@ Base.getindex(ts::TimeSeries{F}, r::AbstractVector{<:Integer}) where {F} = TimeS
     typeof(ts.loader),
 }(
     ts.timesteps[r],
+    ts.times === nothing ? nothing : ts.times[r],
     ts.label,
     ts.loader,
     Dict(k => ts._cache[k] for k in ts.timesteps[r] if haskey(ts._cache, k)),
 )
 
 Base.similar(ts::TimeSeries, ::Type{F2}, dims::Dims) where {F2<:Union{ScalarField,TensorField}} =
-    TimeSeries{F2,Nothing}(copy(ts.timesteps), ts.label, nothing, Dict{Int,F2}())
+    TimeSeries{F2,Nothing}(
+        copy(ts.timesteps),
+        ts.times === nothing ? nothing : copy(ts.times),
+        ts.label,
+        nothing,
+        Dict{Int,F2}(),
+    )
 Base.similar(ts::TimeSeries, ::Type{S}, dims::Dims) where {S} = similar(Array{S}, dims)
 
 # Explicit convenience overloads, layered on top of the genuine

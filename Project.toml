@@ -1,6 +1,6 @@
 name = "PlasmaCore"
 uuid = "c7b9d4a2-5e8f-4b63-9a1d-3f7e2c810da5"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Mario Raeth <mario.raeth@ipp.mpg.de>"]
 
 [deps]
