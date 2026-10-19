@@ -122,4 +122,27 @@ end
         @test ts[2] === replacement
         @test calls[] == 1  # setindex! must not touch the loader
     end
+
+    @testset "times" begin
+        gen(step) = ScalarField(fill(Float64(step), 2, 2))
+        steps = collect(1:6)
+        t = [0.0, 0.5, 1.0, 1.5, 3.0, 4.5]    # dt changed after step 4
+
+        ts = TimeSeries(gen, steps; times = t)
+        @test PlasmaCore.times(ts) == t
+        @test PlasmaCore.times(ts[2:4]) == t[2:4]
+        @test PlasmaCore.times(ts[[1, 5]]) == [0.0, 3.0]
+        @test PlasmaCore.times(similar(ts, typeof(ts[1]), size(ts))) == t
+
+        # integer times are accepted and converted
+        @test PlasmaCore.times(TimeSeries(gen, steps; times = 0:5)) == Float64.(0:5)
+
+        # without times: existing constructor unchanged, accessor throws
+        ts0 = TimeSeries(gen, steps; label = "n")
+        @test ts0.times === nothing
+        @test_throws ArgumentError PlasmaCore.times(ts0[2:3])
+        @test_throws ArgumentError PlasmaCore.times(ts0)
+
+        @test_throws DimensionMismatch TimeSeries(gen, steps; times = [0.0, 1.0])
+    end
 end

@@ -124,6 +124,8 @@ ts[:, 1:5]        # the same spatial slice across every timestep, returned as a 
 dn = map(x -> x .- mean(x), ts)   # TimeSeries of demeaned fields, reconstructed via `similar`
 ```
 
+Steps are integers; physical times are optional and the only correct time axis when `dt` changed, the run did not start at 0 or records are irregular: `TimeSeries(loader, steps; times = t)`, read with `PlasmaCore.times(ts)` (aligned through slicing; throws if the series has none, since it does not know its `dt`).
+
 `map`/broadcasting reconstruct a `TimeSeries` when `f` returns a `ScalarField`/`TensorField`, and fall back to a plain `Array` otherwise (e.g. `map(sum, ts)` returns a `Vector`, not a `TimeSeries` of scalars).
 
 ### Grid
@@ -209,7 +211,13 @@ curl_hat!(curlEhat, Ehat, spectral_wavenumber_views(phi, grid))   # curl in Four
 ```
 The former internals `_get_spectral_workspace`, `_differentiate_impl!`, `_apply_div!`,
 `_apply_curl!`, `_fwd_fft_to!`, `_inv_fft_from!`, `_spectral_curl_hat!` and the
-`_solver_workspace_cache` are deprecated and will be removed in PlasmaCore 0.2.
+`_solver_workspace_cache` were removed in 0.2.0.
+
+Remove Fourier modes along periodic axes (bins are 0-based DFT indices; `N/2` is Nyquist):
+```julia
+fourier_filter!(E[1], grid; remove = (1 => 31:33, 2 => 31:33))   # N = 64: three bins around Nyquist
+```
+The transform is a periodic DFT of the node values, so apply it only to periodic axes.
 
 Wavenumber access:
 ```julia
