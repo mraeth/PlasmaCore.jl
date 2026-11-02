@@ -309,3 +309,7 @@ julia --project=. test/runtests.jl
 - **Float32 on Metal**: `use_metal!()` installs an allocator that downcasts `Float64` arrays to `Float32` on upload. Design simulation code with `DT` type parameters to run on any precision.
 - **Cached spectral workspaces**: keyed by array size, element type, and grid delta. No FFT plan is rebuilt on repeated calls.
 - **Adapt-compatible grid**: `Grid` implements `Adapt.adapt_structure`, so it can be passed directly into GPU kernels via KernelAbstractions. `ScalarField`/`TensorField` do not implement it themselves — GPU residency is controlled per-array via `backend_array`/`backend_copy` instead (see [Backend management](#backend-management)).
+
+## License
+
+ISC, see [LICENSE](LICENSE). Part of the [BSL6D](https://gitlab.mpcdf.mpg.de/bsl6d/bsl6d) project; authors in [AUTHORS.md](AUTHORS.md).
